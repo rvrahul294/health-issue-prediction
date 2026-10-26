@@ -1,9 +1,18 @@
-import os
-import pickle
-import joblib
-import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
+
+from src.model_loader import load_all_models, ModelLoadError
+from src.validation import (
+    parse_and_validate_inputs,
+    DIABETES_FIELD_SPECS,
+    HEART_FIELD_SPECS,
+    PARKINSONS_FIELD_SPECS
+)
+from src.inference import (
+    predict_diabetes,
+    predict_heart,
+    predict_parkinsons
+)
 
 
 st.set_page_config(
@@ -176,26 +185,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Getting the working directory of app.py
-working_dir = os.path.dirname(os.path.abspath(__file__))
 
-
-# Loading the saved models with caching
+# Safe model loading with caching and error handling
 @st.cache_resource
-def load_models():
-    # Diabetes & Parkinson's use full Scikit-Learn pipelines
-    diabetes_pipeline_path = os.path.join(working_dir, 'saved_models', 'diabetes_pipeline.joblib')
-    heart_model_path = os.path.join(working_dir, 'saved_models', 'heart_disease_model.sav')
-    parkinsons_pipeline_path = os.path.join(working_dir, 'saved_models', 'parkinsons_pipeline.joblib')
-
-    diabetes_pipeline = joblib.load(diabetes_pipeline_path)
-    heart_disease_model = pickle.load(open(heart_model_path, 'rb'))
-    parkinsons_pipeline = joblib.load(parkinsons_pipeline_path)
-
-    return diabetes_pipeline, heart_disease_model, parkinsons_pipeline
+def get_cached_models():
+    try:
+        return load_all_models()
+    except ModelLoadError as e:
+        st.error(f"⚠️ Application Model Error: {e}")
+        st.stop()
 
 
-diabetes_model, heart_disease_model, parkinsons_model = load_models()
+diabetes_model, heart_disease_model, parkinsons_model = get_cached_models()
 
 
 # Sidebar Navigation & Information
@@ -230,8 +231,8 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🔗 Project Resources")
     st.markdown("""
-    - [GitHub Repository](https://github.com/29rahul29/Health-Issue-Prediction)
-    - [Project Documentation](https://github.com/29rahul29/Health-Issue-Prediction#readme)
+    - [GitHub Repository](https://github.com/rvrahul294/health-issue-prediction)
+    - [Project Documentation](https://github.com/rvrahul294/health-issue-prediction#readme)
     """)
 
     st.markdown("""
@@ -240,29 +241,6 @@ with st.sidebar:
         This application and its underlying machine learning models are created for portfolio demonstration and educational purposes only. They do not constitute clinical diagnoses or medical advice.
     </div>
     """, unsafe_allow_html=True)
-
-
-# Helper function for safe input validation
-def parse_numeric_inputs(inputs, field_names):
-    """Validates and converts input values into a list of floats.
-    Returns (cleaned_floats, error_message).
-    """
-    empty_fields = [name for name, val in zip(field_names, inputs) if str(val).strip() == '']
-    if empty_fields:
-        return None, f"Please fill in all fields. Missing: {', '.join(empty_fields)}"
-
-    cleaned = []
-    invalid_fields = []
-    for name, val in zip(field_names, inputs):
-        try:
-            cleaned.append(float(str(val).strip()))
-        except ValueError:
-            invalid_fields.append(name)
-
-    if invalid_fields:
-        return None, f"Invalid numeric value in: {', '.join(invalid_fields)}"
-
-    return cleaned, None
 
 
 # Helper callback to populate input fields with sample values
@@ -294,21 +272,23 @@ SAMPLES = {
         'diab_age': '50'
     },
     'heart_healthy': {
-        'heart_age': '67',
-        'heart_sex': 1,
+        # Documented example from heart.ipynb (row 167 in Dataset/heart.csv, target=0)
+        'heart_age': '62',
+        'heart_sex': 0,
         'heart_cp': 0,
-        'heart_trestbps': '160',
-        'heart_chol': '286',
+        'heart_trestbps': '140',
+        'heart_chol': '268',
         'heart_fbs': 0,
         'heart_restecg': 0,
-        'heart_thalach': '108',
-        'heart_exang': 1,
-        'heart_oldpeak': '1.5',
-        'heart_slope': 1,
-        'heart_ca': 3,
+        'heart_thalach': '160',
+        'heart_exang': 0,
+        'heart_oldpeak': '3.6',
+        'heart_slope': 0,
+        'heart_ca': 2,
         'heart_thal': 2
     },
     'heart_risk': {
+        # Documented example from Dataset/heart.csv row 0 (target=1)
         'heart_age': '63',
         'heart_sex': 1,
         'heart_cp': 3,
@@ -397,44 +377,34 @@ if selected == 'Diabetes Prediction':
 
         with col1:
             Pregnancies = st.text_input('Number of Pregnancies', key='diab_pregnancies', help="Total number of pregnancies")
-            SkinThickness = st.text_input('Skin Thickness (mm)', key='diab_skin', help="Triceps skin fold thickness in mm")
+            SkinThickness = st.text_input('Skin Thickness (mm)', key='diab_skin', help="Triceps skin fold thickness in mm (enter 0 if unmeasured)")
             DiabetesPedigreeFunction = st.text_input('Diabetes Pedigree Function', key='diab_dpf', help="Genetic diabetes pedigree function score")
 
         with col2:
             Glucose = st.text_input('Glucose Level (mg/dL)', key='diab_glucose', help="Plasma glucose concentration (2 hours in oral glucose test)")
-            Insulin = st.text_input('Insulin Level (μU/mL)', key='diab_insulin', help="2-Hour serum insulin")
+            Insulin = st.text_input('Insulin Level (μU/mL)', key='diab_insulin', help="2-Hour serum insulin (enter 0 if unmeasured)")
             Age = st.text_input('Age (years)', key='diab_age', help="Patient age in years")
 
         with col3:
-            BloodPressure = st.text_input('Blood Pressure (mm Hg)', key='diab_bp', help="Diastolic blood pressure in mm Hg")
-            BMI = st.text_input('BMI (kg/m²)', key='diab_bmi', help="Body mass index = weight in kg / (height in m)^2")
+            BloodPressure = st.text_input('Blood Pressure (mm Hg)', key='diab_bp', help="Diastolic blood pressure in mm Hg (enter 0 if unmeasured)")
+            BMI = st.text_input('BMI (kg/m²)', key='diab_bmi', help="Body mass index = weight in kg / (height in m)^2 (enter 0 if unmeasured)")
 
         submitted = st.form_submit_button('Run Diabetes Assessment', use_container_width=True)
 
     if submitted:
-        field_names = [
-            'Number of Pregnancies', 'Glucose Level', 'Blood Pressure',
-            'Skin Thickness', 'Insulin Level', 'BMI',
-            'Diabetes Pedigree Function', 'Age'
-        ]
         raw_inputs = [
             Pregnancies, Glucose, BloodPressure, SkinThickness,
             Insulin, BMI, DiabetesPedigreeFunction, Age
         ]
 
-        cleaned_inputs, error_msg = parse_numeric_inputs(raw_inputs, field_names)
+        cleaned_inputs, error_msg = parse_and_validate_inputs(raw_inputs, DIABETES_FIELD_SPECS)
 
         if error_msg:
             st.error(error_msg)
         else:
-            feature_cols = [
-                'Pregnancies', 'Glucose', 'BloodPressure', 'SkinThickness',
-                'Insulin', 'BMI', 'DiabetesPedigreeFunction', 'Age'
-            ]
-            input_df = pd.DataFrame([cleaned_inputs], columns=feature_cols)
-            diab_prediction = diabetes_model.predict(input_df)
+            result = predict_diabetes(diabetes_model, cleaned_inputs)
 
-            if diab_prediction[0] == 1:
+            if result['is_positive']:
                 st.markdown("""
                 <div class="result-card result-positive">
                     <div class="result-header">
@@ -585,11 +555,12 @@ if selected == 'Heart Disease Prediction':
         with col13:
             thal = st.selectbox(
                 'Thallium Stress Test (Thal)',
-                options=[0, 1, 2],
+                options=[0, 1, 2, 3],
                 format_func=lambda x: {
-                    0: "0: Normal",
+                    0: "0: Unspecified / Missing",
                     1: "1: Fixed Defect",
-                    2: "2: Reversible Defect"
+                    2: "2: Normal Blood Flow",
+                    3: "3: Reversible Defect"
                 }.get(x, str(x)),
                 key='heart_thal',
                 help="Thallium scintigraphy stress test defect classification"
@@ -598,49 +569,45 @@ if selected == 'Heart Disease Prediction':
         submitted = st.form_submit_button('Run Heart Disease Assessment', use_container_width=True)
 
     if submitted:
-        field_names = [
-            'Age', 'Sex', 'Chest Pain types', 'Resting Blood Pressure',
-            'Serum Cholestoral', 'Fasting Blood Sugar', 'Resting ECG',
-            'Max Heart Rate', 'Exercise Induced Angina', 'ST depression (oldpeak)',
-            'Slope', 'Major vessels (ca)', 'Thal'
-        ]
         raw_inputs = [
             age, sex, cp, trestbps, chol, fbs, restecg,
             thalach, exang, oldpeak, slope, ca, thal
         ]
 
-        cleaned_inputs, error_msg = parse_numeric_inputs(raw_inputs, field_names)
+        cleaned_inputs, error_msg = parse_and_validate_inputs(raw_inputs, HEART_FIELD_SPECS)
 
         if error_msg:
             st.error(error_msg)
         else:
-            feature_cols = [
-                'age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg',
-                'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal'
-            ]
-            input_df = pd.DataFrame([cleaned_inputs], columns=feature_cols)
-            heart_prediction = heart_disease_model.predict(input_df)
+            result = predict_heart(heart_disease_model, cleaned_inputs)
+            proba_info = ""
+            if result.get('probabilities'):
+                p_dis = result['probabilities']['disease'] * 100
+                p_hea = result['probabilities']['healthy'] * 100
+                proba_info = f"<p class='result-subtitle' style='margin-top: 4px; font-weight: 500;'>Model Confidence: Disease Risk {p_dis:.1f}% | Healthy Likelihood {p_hea:.1f}%</p>"
 
-            if heart_prediction[0] == 1:
-                st.markdown("""
+            if result['is_positive']:
+                st.markdown(f"""
                 <div class="result-card result-positive">
                     <div class="result-header">
                         <span class="result-icon">⚠️</span>
                         <div>
                             <h3 class="result-title">Elevated Risk: Heart Disease Detected</h3>
                             <p class="result-subtitle">The model predicts that the diagnostic profile is consistent with the presence of heart disease.</p>
+                            {proba_info}
                         </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown("""
+                st.markdown(f"""
                 <div class="result-card result-negative">
                     <div class="result-header">
                         <span class="result-icon">✅</span>
                         <div>
                             <h3 class="result-title">Low Risk: Healthy Cardiovascular Result</h3>
                             <p class="result-subtitle">The model predicts that the diagnostic profile is consistent with a healthy cardiovascular status.</p>
+                            {proba_info}
                         </div>
                     </div>
                 </div>
@@ -721,12 +688,6 @@ if selected == "Parkinsons Prediction":
         submitted = st.form_submit_button("Run Parkinson's Assessment", use_container_width=True)
 
     if submitted:
-        field_names = [
-            'MDVP:Fo(Hz)', 'MDVP:Fhi(Hz)', 'MDVP:Flo(Hz)', 'MDVP:Jitter(%)', 'MDVP:Jitter(Abs)',
-            'MDVP:RAP', 'MDVP:PPQ', 'Jitter:DDP', 'MDVP:Shimmer', 'MDVP:Shimmer(dB)',
-            'Shimmer:APQ3', 'Shimmer:APQ5', 'MDVP:APQ', 'Shimmer:DDA', 'NHR',
-            'HNR', 'RPDE', 'DFA', 'spread1', 'spread2', 'D2', 'PPE'
-        ]
         raw_inputs = [
             fo, fhi, flo, Jitter_percent, Jitter_Abs,
             RAP, PPQ, DDP, Shimmer, Shimmer_dB,
@@ -734,21 +695,14 @@ if selected == "Parkinsons Prediction":
             HNR, RPDE, DFA, spread1, spread2, D2, PPE
         ]
 
-        cleaned_inputs, error_msg = parse_numeric_inputs(raw_inputs, field_names)
+        cleaned_inputs, error_msg = parse_and_validate_inputs(raw_inputs, PARKINSONS_FIELD_SPECS)
 
         if error_msg:
             st.error(error_msg)
         else:
-            feature_cols = [
-                'MDVP:Fo(Hz)', 'MDVP:Fhi(Hz)', 'MDVP:Flo(Hz)', 'MDVP:Jitter(%)', 'MDVP:Jitter(Abs)',
-                'MDVP:RAP', 'MDVP:PPQ', 'Jitter:DDP', 'MDVP:Shimmer', 'MDVP:Shimmer(dB)',
-                'Shimmer:APQ3', 'Shimmer:APQ5', 'MDVP:APQ', 'Shimmer:DDA', 'NHR',
-                'HNR', 'RPDE', 'DFA', 'spread1', 'spread2', 'D2', 'PPE'
-            ]
-            input_df = pd.DataFrame([cleaned_inputs], columns=feature_cols)
-            parkinsons_prediction = parkinsons_model.predict(input_df)
+            result = predict_parkinsons(parkinsons_model, cleaned_inputs)
 
-            if parkinsons_prediction[0] == 1:
+            if result['is_positive']:
                 st.markdown("""
                 <div class="result-card result-positive">
                     <div class="result-header">
